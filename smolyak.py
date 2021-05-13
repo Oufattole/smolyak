@@ -2,6 +2,8 @@ import math
 from mpl_toolkits import mplot3d
 import numpy as np
 import matplotlib.pyplot as plt
+from qmcpy import *
+import cubature
 
 class Function(object):
     """
@@ -17,6 +19,8 @@ class Function(object):
         self.u = np.array(u)
     def evaluate(self, x):
         raise NotImplementedError("evaluate function not implemented")
+    def dimension(self):
+        return len(self.a)
     def plot(self, name):
         granularity = 100
         a = self.a
@@ -108,3 +112,25 @@ class Discontinuous_Function(Function):
         return np.exp(sum)
     def plot(self):
         super().plot("discontinuous")
+def smolyak_integrate(f):
+    
+    return 0
+
+def adaptive_cubature(f):
+    d = f.dimension()
+    function = lambda x: f.evaluate(x)
+    xmin = [0]*d
+    xmax = [1]*d
+    val, err = cubature.cubature(function, d, 1, xmin, xmax, abserr=1e-07) # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
+    return val[0]
+
+def mc_integrate(f):
+    abs_tol = 1e-7
+    p = 1
+    d = f.dimension()
+    integral = CustomFun(
+        true_measure = Uniform(Lattice(d)),
+        g = lambda x: np.array([f.evaluate(x_i) for x_i in x]))
+    solution, data = CubQMCLatticeG(integral, abs_tol).integrate() #stopping criterion, useful param: n_init=1024.0, n_max=1024
+    #data has the error and number of steps (I think it is n_init or n_max, check this) 
+    return solution
