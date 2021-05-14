@@ -1,4 +1,5 @@
 import math
+from scipy.special import comb
 from mpl_toolkits import mplot3d
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,10 +18,26 @@ class Function(object):
         assert(len(a)==len(u))
         self.a = np.array(a)
         self.u = np.array(u)
+        self.count=0
     def evaluate(self, x):
         raise NotImplementedError("evaluate function not implemented")
     def dimension(self):
         return len(self.a)
+    def begin_evaluation_count(self):
+        self.count = 0
+    def get_evaluation_count(self):
+        return self.count
+    def record_evaluations(self):
+        """
+        We want to record the points we evaluated the integral at.
+        """
+        raise NotImplementedError("Hold your horses")
+    def plot_evaluated_points(self):
+        """
+        We want to see in the 2D case what points were evaluated at to approximate the integral
+        This is to present the sparsity/distribution of evaluations of different methods in the paper
+        """
+        raise NotImplementedError("Hold your horses")
     def plot(self, name):
         granularity = 100
         a = self.a
@@ -48,6 +65,7 @@ class Function(object):
 
 class Continuous_Function(Function):
     def evaluate(self, x):
+        self.count +=1
         a = self.a
         u = self.u
         d = len(self.a)
@@ -64,6 +82,7 @@ class Continuous_Function(Function):
 
 class Gaussian_Function(Function):
     def evaluate(self, x):
+        self.count +=1
         a = self.a
         u = self.u
         d = len(self.a)
@@ -80,6 +99,7 @@ class Gaussian_Function(Function):
 
 class Oscillatory_Function(Function):
     def evaluate(self, x):
+        self.count +=1
         a = self.a
         u = self.u
         d = len(self.a)
@@ -96,6 +116,7 @@ class Oscillatory_Function(Function):
 
 class Discontinuous_Function(Function):
     def evaluate(self, x):
+        self.count +=1
         x = np.array(x)
         a = self.a
         u = self.u
@@ -112,9 +133,167 @@ class Discontinuous_Function(Function):
         return np.exp(sum)
     def plot(self):
         super().plot("discontinuous")
-def smolyak_integrate(f):
+class Hyper_Plane(Function):
+    def evaluate(self, x):
+        return self.a[0]
+def yield_tensor(dim, points_per_dim, point=None):
+    if dim == 0:
+        yield np.array(point)
+    else:
+        if point is None:
+            point = []
+        for i in range(0, points_per_dim):
+            point.append(i/points_per_dim)
+            yield from yield_tensor(dim-1, points_per_dim, point=point)
+            point.pop()
+def generate_k(dim, l, k_left=None):
+    if k_left == None:
+        k_left = l+dim-1
+    for k_i in range(1,k_left+1):
+        next_k_left = k_left-k_i
+        next_dim = dim-1
+        if next_k_left >= next_dim:
+            if dim == 1:
+                yield [k_i]
+            else:
+                for k in generate_k(next_dim, l, next_k_left):
+                    yield [k_i]+k
+
+def generate_midpoint_j(k):
+    k_value = k[0]
+    if len(k)==1:
+        for i in range(1,k_value+1):
+            yield [i]
+    else:
+        for i in range(1,k_value+1):
+            for sub_j in generate_midpoint_j(k[1:]):
+                yield [i] + sub_j
+
+def generate_mid_point(j,k):
+    """
+    maps j,k to point on sparse matrix ([0,1]^d) with univariate cubature
+    levels defined by k 
+    """
+    p = []
+    for j_i, k_i in zip(j,k):
+        N = k_i
+        denominator = k_i+1
+        numerator = j_i
+        p.append(numerator/denominator)
+    return tuple(p)
+
+def generate_q(k, l, dim, q_left=None):
+    if q_left is None:
+        q_left = l + 2*dim - np.sum(k)-1
+    for q_i in range(1, q_left+1):
+        next_q_left = q_left-q_i
+        next_dim = dim-1
+        if next_q_left >= next_dim:
+            if dim == 1:
+                yield [q_i]
+            else:
+                for q in generate_q(k, l, next_dim, q_left=next_q_left):
+                    yield [q_i] + q
+# def get_midpoint_v(k_i, j_i, q_i):
+#     if q_i == 1:
+#         return get_univariate_midpoint_weight(k_i,j_i) #univarite rule for level k_i and index j_i
+#     else:
+#         return get_univariate_midpoint_weight(k_i,j_i)
+def get_midpoint_weight(j,k,dim, l):
+    w_k_j = 1
+    # for q in generate_q(k,l,dim):
+    #     product = 1
+    #     for k_i, j_i, q_i in zip(k,j,q):
+    #         product *= get_midpoint_v(k_i, j_i, q_i)
+    #     w_k_j += product
     
-    return 0
+    k_norm = sum(k)
+    for k_i, j_i in zip(k,j):
+        w = 1/k_i
+        c = (-1)**(l-k_norm)
+        # print("choose")
+        # print(dim-1)
+        # print(l-k_norm)
+        # print(np.choose(dim-1, l-k_norm))
+        
+        combos = comb(dim-1, l-k_norm)
+        w_k_j *= w*c * combos
+    return w_k_j
+
+    # w_k_j = 
+    # for q in range(np.sum(k), 2*dim + l):
+    # check = 
+    # assert(weight == check)
+    # return weight
+
+def generate_midpoint_point_weight(dim, l):
+    """ midpoint cubature rule
+    Parameter:
+        k:
+            d-dimensional array where each entry represents the 
+            number of points perform a rectangle univariate
+            integral for
+    Yields:
+        2-tuples of point and weight for rectangle cubature for smolyak
+    """
+    for k in generate_k(dim, l):
+        # print(f"k:{k}")
+        for j in generate_midpoint_j(k):
+            # print(f"j:{j}")
+            point = generate_mid_point(j,k)
+            weight = get_midpoint_weight(j,k, dim, l)
+            yield point, weight
+
+    
+def generate_clenshaw_curtis_points(dim, l):
+    """
+    Parameter:
+        k:
+            d-dimensional array where each entry represents the 
+            number of points perform a clenshaw curtis univariate
+            integral for
+    Yields:
+        2-tuples of point and weight for clenshaw curtis cubature for smolyak
+    """
+    pass
+
+def smolyak_integrate(f, l=5):
+    """
+    f:
+        input function
+    l:
+        approximation level ~ correlates with number of points we select for sparse grid
+    returns:
+        smolyak estimated integral
+    """
+    evaluated = {}
+    d = f.dimension()
+    l = 10 #
+    k = generate_k(d,l)
+    integrand = 0
+    for point, weight in generate_midpoint_point_weight(d, l):
+        if point not in evaluated:
+            evaluated[point] = f.evaluate(point)
+        integrand += weight * evaluated[point] #create custom memoization evaluate
+    return integrand
+
+def tensor_integrate(f):
+    d = f.dimension()
+    points_per_dim = 5
+    integral = 0
+    for point in yield_tensor(d, points_per_dim):
+        value = f.evaluate(point)
+        for dim in range(d):
+            value /= points_per_dim
+        integral += value
+    return integral
+            
+
+    input = []
+    for i in range(d):
+        input.append(d)
+    
+
 
 def adaptive_cubature(f):
     d = f.dimension()
