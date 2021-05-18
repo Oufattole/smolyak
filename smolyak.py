@@ -145,7 +145,8 @@ class Discontinuous_Function(Function):
         super().plot("discontinuous")
 class Hyper_Plane(Function):
     def evaluate(self, x):
-        self.points.append(x)
+        if self.record:
+            self.points.append(x)
         return self.a[0]
 def yield_tensor(dim, points_per_dim, point=None):
     if dim == 0:
@@ -301,6 +302,77 @@ def smolyak_integrate(f, l=5):
             evaluated[point] = f.evaluate(point)
         integrand += weight * evaluated[point] #create custom memoization evaluate
     return integrand
+
+class q():
+    def __init__(self,d,l,f,cc=True):
+        self.d = d 
+        self.l = l 
+        self.f = f 
+        self.cc=cc
+    def get_k(self):
+        def sum_k(length,d,k=[]):
+            #k iterates thrgouh dimensional quadrature levels
+            if len(k) == d:
+                yield k.copy()
+            else:
+                for i in range(1,length+1):
+                    k.append(i)
+                    yield from sum_k(length-i, d, k)
+                    k.pop()
+        yield from sum_k(self.l,self.d)
+    def get_m(self,k_i):
+        if self.cc:
+            return 1 if k_i ==1 else 2**(k_i-1)+1
+        raise NotImplementedError("add smolyak midpoint cubature")
+    def get_j(self, k):
+        #j iterates through the number of points for quadrature levels defined by k
+        d,l= self.d,self.l
+        def sum_j(k,j=[]):
+            if len(j) == d:
+                yield j.copy()
+            else:
+                for j_i in range(1,self.get_m(k[0])+1):
+                    j.append(j_i)
+                    yield from sum_j(k[1:], j)
+                    j.pop()
+        yield from sum_j(k)
+    def _cc_point_weight(self, j, k):
+        d,l= self.d,self.l
+        weight = 1
+        point = []
+        for j_i, k_i in zip(j,k):
+            n = self.get_m(k_i)
+            coord = .5 if n==1 else np.cos(np.pi*(j_i-1)/(n-1))/2+.5
+            point.append(coord)
+            if j_i == 1:
+                weight *= 1/(n*(n-2))
+            else:
+                term = 0
+                for i in range(1, (n-3)//2+1):
+                    term += 1/(4*i**2-1)*np.cos(2 * np.pi * i * (j_i-1)/(n-1))
+                w = 2/(n-1) * (1-np.cos(np.pi * (j_i-1)/n/(n-2)) - 2*term)
+                weight *= w
+
+        return tuple(point), weight
+
+    def cc_point_weights(self):
+        for k in self.get_k():
+            for j in self.get_j(k):
+                point, weight = self._cc_point_weight(j,k)
+                yield point, weight
+    
+    def integrate(self,l=5):
+        f = self.f
+        self.l = l
+        integrand = 0
+        for point, weight in self.cc_point_weights():
+            integrand += weight * f.evaluate(point) #create custom memoization evaluate
+        return integrand
+
+
+    
+    
+            
 
 def tensor_integrate(f):
     d = f.dimension()
