@@ -101,7 +101,57 @@ class TestSmolyak(unittest.TestCase):
         self.assertAlmostEqual(2, smolyak_integral, places=2)
         smolyak_integral = smolyak.smolyak_integrate(f, 5)
         self.assertAlmostEqual(2, smolyak_integral, places=2)
+    def test_evaluation_points(self):
+        a = [2,2]
+        u = [.5,.5]
+        f = smolyak.Hyper_Plane(a,u)
+        def plot(l):
+            f.record_evaluations()
+            smolyak_integral = smolyak.smolyak_integrate(f, l)
+            print(len(set(f.points)))
+            print()
+            f.plot_evaluated_points("eval_"+str(l)+".png")
+        plot(1)
+        plot(2)
+        plot(3)
+        plot(4)
+        plot(5)
         
+    def test_clenshaw(self):
+        j = [1]
+        k = [1]
+        expected = [.5]
+        output = [each for each in smolyak.generate_clenshaw_curtis_points(j,k)]
+        for e, o in zip(expected, output):
+            self.assertAlmostEqual(e,o)
+        j = [1,2]
+        k = [2,2]
+        expected = [1,0]
+        output = [each for each in smolyak.generate_clenshaw_curtis_points(j,k)]
+        for e, o in zip(expected, output):
+            self.assertAlmostEqual(e,o)
+
+        j = [1,2,3]
+        k = [3,3,3]
+        expected = [1,.5,0]
+        output = [each for each in smolyak.generate_clenshaw_curtis_points(j,k)]
+        for e, o in zip(expected, output):
+            self.assertAlmostEqual(e,o)
+
+        j = [1,2,3,4]
+        k = [4,4,4,4]
+        expected = [1,3/4,1/4,0]
+        output = [each for each in smolyak.generate_clenshaw_curtis_points(j,k)]
+        for e, o in zip(expected, output):
+            self.assertAlmostEqual(e,o)
+        
+        j = [1,2,3,4,5]
+        k = [5,5,5,5,5]
+        expected = [1,.5 + 1/np.sqrt(2)/2, .5, .5 - 1/np.sqrt(2)/2, 0]
+        output = [each for each in smolyak.generate_clenshaw_curtis_points(j,k)]
+        for e, o in zip(expected, output):
+            self.assertAlmostEqual(e,o)
+
 
 
         

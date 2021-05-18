@@ -19,6 +19,7 @@ class Function(object):
         self.a = np.array(a)
         self.u = np.array(u)
         self.count=0
+        self.record = False
     def evaluate(self, x):
         raise NotImplementedError("evaluate function not implemented")
     def dimension(self):
@@ -31,13 +32,22 @@ class Function(object):
         """
         We want to record the points we evaluated the integral at.
         """
-        raise NotImplementedError("Hold your horses")
-    def plot_evaluated_points(self):
+        assert(len(self.a)==2)
+        self.points = []
+        self.record = True
+    def plot_evaluated_points(self, name="eval_points.png"):
         """
         We want to see in the 2D case what points were evaluated at to approximate the integral
         This is to present the sparsity/distribution of evaluations of different methods in the paper
         """
-        raise NotImplementedError("Hold your horses")
+        assert(self.record)
+        points = np.array(self.points)
+
+        plt.plot(points.T[0], points.T[1], 'ro')
+        plt.xlim(0, 1)
+        plt.ylim(0, 1)
+        plt.title("test evaluation points")
+        plt.savefig(name)
     def plot(self, name):
         granularity = 100
         a = self.a
@@ -135,6 +145,7 @@ class Discontinuous_Function(Function):
         super().plot("discontinuous")
 class Hyper_Plane(Function):
     def evaluate(self, x):
+        self.points.append(x)
         return self.a[0]
 def yield_tensor(dim, points_per_dim, point=None):
     if dim == 0:
@@ -245,17 +256,32 @@ def generate_midpoint_point_weight(dim, l):
             yield point, weight
 
     
-def generate_clenshaw_curtis_points(dim, l):
+def generate_clenshaw_curtis_points(j,k):
     """
     Parameter:
-        k:
-            d-dimensional array where each entry represents the 
-            number of points perform a clenshaw curtis univariate
-            integral for
+        j, k
     Yields:
-        2-tuples of point and weight for clenshaw curtis cubature for smolyak
+        point
     """
-    pass
+    point = []
+    for j_i, k_i in zip(j,k):
+        n = k_i
+        coord = .5 if n==1 else np.cos(np.pi*(j_i-1)/(n-1))/2+.5
+        point.append(coord)
+    return tuple(point)
+
+def get_clenshaw_curtis_weight(j,k, dim, l):
+    return 1 # TODO
+
+def generate_clenshaw_curtis_point_weight(d, l):
+    for k in generate_k(d, l):
+        # print(f"k:{k}")
+        for j in generate_midpoint_j(k):
+            # print(f"j:{j}")
+            point = generate_clenshaw_curtis_points(j,k)
+            weight = get_midpoint_weight(j,k, d, l)
+            yield point, weight
+
 
 def smolyak_integrate(f, l=5):
     """
@@ -268,10 +294,9 @@ def smolyak_integrate(f, l=5):
     """
     evaluated = {}
     d = f.dimension()
-    l = 10 #
     k = generate_k(d,l)
     integrand = 0
-    for point, weight in generate_midpoint_point_weight(d, l):
+    for point, weight in generate_clenshaw_curtis_point_weight(d, l):
         if point not in evaluated:
             evaluated[point] = f.evaluate(point)
         integrand += weight * evaluated[point] #create custom memoization evaluate
