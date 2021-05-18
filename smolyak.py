@@ -304,8 +304,9 @@ def smolyak_integrate(f, l=5):
     return integrand
 
 class q():
-    def __init__(self,d,l,f,cc=True):
-        self.d = d 
+    def __init__(self,l,f,cc=True):
+        self.d = f.dimension()
+        assert(self.d<=l)
         self.l = l 
         self.f = f 
         self.cc=cc
@@ -336,23 +337,32 @@ class q():
                     yield from sum_j(k[1:], j)
                     j.pop()
         yield from sum_j(k)
+    def _cc_univariate_point_weight(self, j_i, k_i):
+        n = self.get_m(k_i)
+        p = .5 if n==1 else np.cos(np.pi*(j_i-1)/(n-1))/2+.5
+        w=0
+        j_i = min(n+1-j_i, j_i)#weights are symmetric
+        if j_i == 1:
+            w = 1/(n*(n-2))/2 #divided by 2
+        else:
+            term = 0
+            assert((n-1)%2==0)
+            for i in range(1, (n-3)//2+1):
+                term += 1/(4*i**2-1)*np.cos(2 * np.pi * i * (j_i-1)/(n-1))
+            w = 1/(n-1) * (1-np.cos(np.pi * (j_i-1))/(n*(n-2)) - 2*term) #divided by 2
+        return p,w
+
     def _cc_point_weight(self, j, k):
         d,l= self.d,self.l
         weight = 1
         point = []
         for j_i, k_i in zip(j,k):
-            n = self.get_m(k_i)
-            coord = .5 if n==1 else np.cos(np.pi*(j_i-1)/(n-1))/2+.5
-            point.append(coord)
-            if j_i == 1:
-                weight *= 1/(n*(n-2))
-            else:
-                term = 0
-                for i in range(1, (n-3)//2+1):
-                    term += 1/(4*i**2-1)*np.cos(2 * np.pi * i * (j_i-1)/(n-1))
-                w = 2/(n-1) * (1-np.cos(np.pi * (j_i-1)/n/(n-2)) - 2*term)
-                weight *= w
-
+            p,w = self._cc_univariate_point_weight(j_i,k_i)
+            point.append(p)
+            weight *= w
+        l_thesis = np.sum(k)
+        k_thesis = l
+        weight *= (-1)**(k_thesis-l_thesis) *comb(d-1, k_thesis-l_thesis) #multiply the normalizing coefficient
         return tuple(point), weight
 
     def cc_point_weights(self):
@@ -392,21 +402,36 @@ def tensor_integrate(f):
     
 
 
-def adaptive_cubature(f):
+def adaptive_cubature(f,n_max=None,abs_err=None):
     d = f.dimension()
     function = lambda x: f.evaluate(x)
     xmin = [0]*d
     xmax = [1]*d
-    val, err = cubature.cubature(function, d, 1, xmin, xmax, abserr=1e-07) # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
+    val = None
+    err = None
+    if n_max:
+        val, err = cubature.cubature(function, d, 1, xmin, xmax, n_max) # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
+    elif abs_err:
+        val, err = cubature.cubature(function, d, 1, xmin, xmax, abserr=abs_err)
+    else:
+        val, err = cubature.cubature(function, d, 1, xmin, xmax)
+
     return val[0]
 
-def mc_integrate(f):
+def mc_integrate(f, n_max=None, abs_err=None):
     abs_tol = 1e-7
-    p = 1
     d = f.dimension()
+    solution = None
+    data = None
     integral = CustomFun(
         true_measure = Uniform(Lattice(d)),
         g = lambda x: np.array([f.evaluate(x_i) for x_i in x]))
-    solution, data = CubQMCLatticeG(integral, abs_tol).integrate() #stopping criterion, useful param: n_init=1024.0, n_max=1024
+    solution, data = CubQMCLatticeG(integral).integrate() #stopping criterion, useful param: n_init=1024.0, n_max=1024
     #data has the error and number of steps (I think it is n_init or n_max, check this) 
+    if n_max:
+        solution, data = CubQMCLatticeG(integral, n_max=n_max).integrate() # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
+    elif abs_err:
+        solution, data = CubQMCLatticeG(integral,abs_tol=abs_err).integrate()
+    else:
+        solution, data = CubQMCLatticeG(integral).integrate()
     return solution
