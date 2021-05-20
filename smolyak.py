@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qmcpy import *
 import cubature
+from sparsegrid import SparseInterpolator
 
 class Function(object):
     """
@@ -13,22 +14,37 @@ class Function(object):
     self.u is a list of length d where each element is chosen from [0, 1]
     
     self.a is a list of length d where each element is chosen from the real numbers
+
+    boundary_transform:
+        these functions are [0,1], boundary transform maps the function to a [-1,1]
+        function with the same integral
     """
-    def __init__(self, a, u):
+    def __init__(self, a, u, boundary_transform = False):
         assert(len(a)==len(u))
         self.a = np.array(a)
         self.u = np.array(u)
         self.count=0
         self.record = False
+        self.boundary_transform = boundary_transform
     def evaluate(self, x):
-        raise NotImplementedError("evaluate function not implemented")
+        if self.record:
+            self.points.append(x)
+        if self.boundary_transform:
+            d = self.dimension()
+            xx = [each/2+.5 for each in x]
+            value = self._evaluate(xx)
+            return value / (2**(d))
+        else:
+            return self._evaluate(x)
+    def _evaluate(self):
+        raise NotImplementedError("evaluate function must be implemented by subclass")
     def dimension(self):
         return len(self.a)
     def begin_evaluation_count(self):
         self.count = 0
     def get_evaluation_count(self):
         return self.count
-    def record_evaluations(self):
+    def record_evaluations_to_plot(self):
         """
         We want to record the points we evaluated the integral at.
         """
@@ -74,7 +90,7 @@ class Function(object):
 
 
 class Continuous_Function(Function):
-    def evaluate(self, x):
+    def _evaluate(self, x):
         self.count +=1
         a = self.a
         u = self.u
@@ -91,7 +107,7 @@ class Continuous_Function(Function):
         super().plot("continuous")
 
 class Gaussian_Function(Function):
-    def evaluate(self, x):
+    def _evaluate(self, x):
         self.count +=1
         a = self.a
         u = self.u
@@ -108,7 +124,7 @@ class Gaussian_Function(Function):
         super().plot("gaussian")
 
 class Oscillatory_Function(Function):
-    def evaluate(self, x):
+    def _evaluate(self, x):
         self.count +=1
         a = self.a
         u = self.u
@@ -125,7 +141,7 @@ class Oscillatory_Function(Function):
         super().plot("oscillatory")
 
 class Discontinuous_Function(Function):
-    def evaluate(self, x):
+    def _evaluate(self, x):
         self.count +=1
         x = np.array(x)
         a = self.a
@@ -144,9 +160,7 @@ class Discontinuous_Function(Function):
     def plot(self):
         super().plot("discontinuous")
 class Hyper_Plane(Function):
-    def evaluate(self, x):
-        if self.record:
-            self.points.append(x)
+    def _evaluate(self, x):
         return self.a[0]
 def yield_tensor(dim, points_per_dim, point=None):
     if dim == 0:
@@ -306,14 +320,60 @@ def smolyak_integrate(f, l=5):
 class q():
     def __init__(self,l,f,cc=True):
         self.d = f.dimension()
-        assert(self.d<=l)
-        self.l = l 
+        assert(0<=l)
+        self.l = l + self.d #add l to d
         self.f = f 
         self.cc=cc
+
+        self.cache_k = {}
+        self.cache_j = {}
+        self.cache_uni_pw = {}
+        self.cache_pw = {}
+        self.cache_eval = {}
+        
+    # def check_cache(self, function_id, input):
+    #     if function_id == "k":
+    #         pass
+    #     elif function_id == "j":
+    #         pass
+    #     elif function_id == "uni_pw":
+    #         pass
+    #     elif function_id == "pw":
+    #         pass
+    #     elif function_id == "eval":
+    #         pass
+    #     else:
+    #         raise ValueError("function_id is invalid")
+    # def add_to_cache(self, function_id, input, output):
+    #     if function_id == "k":
+    #         pass
+    #     elif function_id == "j":
+    #         pass
+    #     elif function_id == "uni_pw":
+    #         pass
+    #     elif function_id == "pw":
+    #         j, k = input
+    #         j = np.array(j)
+    #         k = np.array(k)
+    #         sortedpairs = sorted(enumerate(j), key=lambda x: x[-1])
+    #         indices = np.fromiter(index for (value, index) in sortedpairs)
+    #         self.cache_pw[indices] = 
+
+    #     elif function_id == "eval":
+    #         pass
+    #     else:
+    #         raise ValueError("function_id is invalid")
+        
     def get_k(self):
         def sum_k(length,d,k=[]):
             #k iterates thrgouh dimensional quadrature levels
-            if len(k) == d:
+            if len(k) == d:# and sum(k)>=max(d,self.l-d+1):
+                # the second boolean check doesn't affect accuracy might help speed
+                #from the thesis page 21 equation
+                #max(d,k-d+1)
+                #k is level
+                #d is dimension
+                # assert(sum(k)>=max(d,self.l-d+1)) #k is level, 
                 yield k.copy()
             else:
                 for i in range(1,length+1):
@@ -338,21 +398,29 @@ class q():
                     j.pop()
         yield from sum_j(k)
     def _cc_univariate_point_weight(self, j_i, k_i):
-        n = self.get_m(k_i)
-        p = .5 if n==1 else np.cos(np.pi*(j_i-1)/(n-1))/2+.5
-        w=0
-        j_i = min(n+1-j_i, j_i)#weights are symmetric
-        if j_i == 1:
-            w = 1/(n*(n-2))/2 #divided by 2
+        # print(f"j_i:{j_i}")
+        # print(f"k_i:{k_i}")
+        if k_i == 1: #edge case
+            return 0, 2 
         else:
-            term = 0
-            assert((n-1)%2==0)
-            for i in range(1, (n-3)//2+1):
-                term += 1/(4*i**2-1)*np.cos(2 * np.pi * i * (j_i-1)/(n-1))
-            w = 1/(n-1) * (1-np.cos(np.pi * (j_i-1))/(n*(n-2)) - 2*term) #divided by 2
-        return p,w
+            n = self.get_m(k_i)
+            d=self.f.dimension()
+            
+            p = 0 if n==1 else np.cos(np.pi*(j_i-1)/(n-1))
+            w=0
+            j_i = min(n+1-j_i, j_i)#weights are symmetric
+            if j_i == 1:
+                w = 1/(n*(n-2)) #removed divided by 2
+            else:
+                term = 0
+                assert((n-1)%2==0)
+                for i in range(1, (n-3)//2+1):
+                    term += 1/(4*i**2-1)*np.cos(2 * np.pi * i * (j_i-1)/(n-1))
+                w = 2/(n-1) * (1-np.cos(np.pi * (j_i-1))/(n*(n-2)) - 2*term) # removed divided by 2
+            # print(f"final_check:{w}")
+            return p,w
 
-    def _cc_point_weight(self, j, k):
+    def _cc_sparse_grid_point_weight(self, j, k):
         d,l= self.d,self.l
         weight = 1
         point = []
@@ -365,22 +433,49 @@ class q():
         weight *= (-1)**(k_thesis-l_thesis) *comb(d-1, k_thesis-l_thesis) #multiply the normalizing coefficient
         return tuple(point), weight
 
-    def cc_point_weights(self):
+    def cc_sparse_grid_point_weights(self):
         for k in self.get_k():
             for j in self.get_j(k):
-                point, weight = self._cc_point_weight(j,k)
+                point, weight = self._cc_sparse_grid_point_weight(j,k)
+                # print(f"point:{point}")
+                # print(f"weight:{weight}")
                 yield point, weight
     
-    def integrate(self,l=5):
+    def integrate(self):
         f = self.f
-        self.l = l
+        d = f.dimension()
         integrand = 0
-        for point, weight in self.cc_point_weights():
+        weights = 0
+        for point, weight in self.cc_sparse_grid_point_weights():
+            weights += weight
+            # print()
+            # print(f"weight:{weight}")
+            # print(f"eval{f.evaluate(point)}")
             integrand += weight * f.evaluate(point) #create custom memoization evaluate
+        # print(f"weights:{weights}")
         return integrand
 
 
-    
+def smolyak_sparsegrid(f, l):
+    dim = f.dimension()                   # Dimensionality of function to interpolate
+    level_max = l             # Maximum degree of interpolation
+    shape = Nx, Ny = 5, 5   # values on x and y
+
+    Ntot = Nx * Ny
+    x = np.linspace(0, 1, Nx)
+    y = np.linspace(0, 1, Ny)
+    X,  Y = np.meshgrid(x, y)
+    gridout = np.asarray([X.reshape(Ntot), Y.reshape(Ntot)]).T
+
+    integration_interval = np.asarray([[0.0, 1.0], [0.0, 1.0]]).T
+    interpolation_type = 'CC'
+    interp = SparseInterpolator(level_max, dim,
+                                interpolation_type,
+                                intergration_interval)
+    # fitting returns also the interpolated values
+    output = interp.fit(f.evaluate, gridout)
+    # one can evaluate the interpolation at any other point futher on
+    output = interp.evaluate(gridout)
     
             
 
@@ -402,11 +497,17 @@ def tensor_integrate(f):
     
 
 
-def adaptive_cubature(f,n_max=None,abs_err=None):
+def adaptive_cubature(f,n_max=None,abs_err=None, transform_boundary=False):
     d = f.dimension()
     function = lambda x: f.evaluate(x)
-    xmin = [0]*d
-    xmax = [1]*d
+    xmin = None
+    xmax = None
+    if transform_boundary:
+        xmin = [-1]*d
+        xmax = [1]*d
+    else:
+        xmin = [0]*d
+        xmax = [1]*d
     val = None
     err = None
     if n_max:
