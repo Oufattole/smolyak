@@ -65,15 +65,17 @@ def test_cubature(f, d, level, ground_truth):
     print(f"mc_count:{mc_points}")
     print("finish mc")
 
-    return abs((cuba - ground_truth)/ground_truth), abs((mc - ground_truth)/ground_truth),  cuba_points,mc_points
+    return abs((cuba - ground_truth)/ground_truth), abs((mc - ground_truth)/ground_truth),  cuba_points, mc_points
 def test_cubatures(func, d, levels, runs):
     smolyak_integral_steps, smolyak_function = read_smolyak(d)
 
     smolyak_rel_error = {}#[0 for i in range(len(smolyak_integral_steps))]
     # smolyak_points = [0 for i in range(len(smolyak_integral_steps))]
 
-    cuba_rel_error = [0 for i in range(len(levels))]
-    mc_rel_error = [0 for i in range(len(levels))]
+    cuba_rel_error = {}
+    c_freq = {}
+    mc_rel_error = {}
+    mc_freq ={}
 
     cuba_points, mc_points, smolyak_points = [], [], []
 
@@ -95,16 +97,27 @@ def test_cubatures(func, d, levels, runs):
             level = levels[i]
             cuba_error, mc_error, cuba_points, mc_points = test_cubature(f,d,level,ground_truth)
 
-            cuba_rel_error[i] += cuba_error
-            mc_rel_error[i] += mc_error
+            cuba_rel_error.setdefault(cuba_points, 0)
+            c_freq.setdefault(cuba_points, 0)
+            cuba_rel_error[cuba_points] += cuba_error
+            c_freq[cuba_points] += 1
+
+            mc_rel_error.setdefault(mc_points, 0)
+            mc_freq.setdefault(mc_points, 0)
+            mc_rel_error[mc_points] += mc_error
+            mc_freq[mc_points] += 1
+
         for i in range(len(smolyak_results)):
             level, integral, steps = smolyak_results[i]
             smolyak_rel_error.setdefault(steps,0)
             smolyak_rel_error[steps] += abs((integral - ground_truth)/ground_truth) #[i] += abs((integral - ground_truth)/ground_truth)
             # smolyak_points[i] = steps
-    cuba_rel_error = [each/runs for each in cuba_rel_error]
+    for key in cuba_rel_error.keys():
+        cuba_rel_error[key] /= c_freq[key]
 
-    mc_rel_error = [each/runs for each in mc_rel_error]
+    for key in mc_rel_error.keys():
+        mc_rel_error[key] /= mc_freq[key]
+
     for key in smolyak_rel_error.keys():
         smolyak_rel_error[key] /= runs
 
@@ -114,27 +127,28 @@ def get_smolyak_y(d,l,func):
     #get from csv
     return 0
 def plot(d, func_name, cuba, mc, smolyak, levels):
-    def get_smolyak_int_points(smolyak):
-        smolyak_integrals = []
-        smolyak_points = []
-        for key in sorted(smolyak.keys()):
-            smolyak_integrals.append(smolyak[key])
-            smolyak_points.append(key)
-        return smolyak_integrals, smolyak_points
+    def get_rel_error_points(rel_error_dict):
+        rel_errors = []
+        points = []
+        for key in sorted(rel_error_dict.keys()):
+            rel_errors.append(rel_error_dict[key])
+            points.append(key)
+        return rel_errors, points
 
-    cuba_points = [cuba_level_to_points(level) for level in levels]
-    mc_points = [mc_level_to_points(level) for level in levels]
-    smolyak_integrals, smolyak_points = get_smolyak_int_points(smolyak)
+    cuba_rel_error, cuba_points = get_rel_error_points(cuba)
+    mc_rel_error, mc_points = get_rel_error_points(mc)
+    smolyak_rel_error, smolyak_points = get_rel_error_points(smolyak)
 
     # smolyak_points = [smolyak_level_to_points(level) for level in levels]
 
     x_1 = np.log(cuba_points)
     x_2 = np.log(mc_points)
     x_3 = np.log(smolyak_points)
+    x_3 = [each for each in x_3 if each >= min(min(x_1), min(x_2))]
 
-    y_1 = cuba
-    y_2 = mc
-    y_3 = smolyak_integrals
+    y_1 = cuba_rel_error
+    y_2 = mc_rel_error
+    y_3 = smolyak_rel_error[- len(x_3):]
 
     # y_1 = np.log(cuba)
     # y_2 = np.log(mc)
