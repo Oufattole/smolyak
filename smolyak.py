@@ -5,7 +5,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qmcpy import *
 import cubature
-from sparsegrid import SparseInterpolator
 
 class Function(object):
     """
@@ -25,10 +24,18 @@ class Function(object):
         self.u = np.array(u)
         self.count=0
         self.record = False
+        self.record_count = False
         self.boundary_transform = boundary_transform
+    def reset_record_count(self):
+        self.record_count = True
+        self.count=0
+    def get_count(self):
+        return self.count
     def evaluate(self, x):
         if self.record:
             self.points.append(x)
+        if self.record_count:
+            self.count += 1
         if self.boundary_transform:
             d = self.dimension()
             xx = [each/2+.5 for each in x]
@@ -51,18 +58,22 @@ class Function(object):
         assert(len(self.a)==2)
         self.points = []
         self.record = True
-    def plot_evaluated_points(self, name="eval_points.png"):
+    def plot_evaluated_points(self, name="eval_points.png", title="eval_points"):
         """
         We want to see in the 2D case what points were evaluated at to approximate the integral
         This is to present the sparsity/distribution of evaluations of different methods in the paper
         """
         assert(self.record)
         points = np.array(self.points)
+        if self.boundary_transform:
+            points = np.array([[p/2+.5 for p in point] for point in points])
 
         plt.plot(points.T[0], points.T[1], 'ro')
         plt.xlim(0, 1)
         plt.ylim(0, 1)
-        plt.title("test evaluation points")
+        plt.xlabel("$x_1$")
+        plt.ylabel("$y_1$")
+        plt.title(title)
         plt.savefig(name)
     def plot(self, name):
         granularity = 100
@@ -86,6 +97,9 @@ class Function(object):
         ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
                         cmap='viridis', edgecolor='none')
         ax.set_title(name)
+        ax.set_xlabel("$x_1$")
+        ax.set_ylabel("$x_2$")
+        ax.set_zlabel("$f(x_1,x_2)$")
         plt.savefig(name)
 
 
@@ -104,7 +118,10 @@ class Continuous_Function(Function):
             sum += ai*abs(xi-ui)
         return np.exp(-sum)
     def plot(self):
-        super().plot("continuous")
+        super().plot("Continuous Function")
+    @classmethod
+    def name(cls):
+        return "Continuous Function"
 
 class Gaussian_Function(Function):
     def _evaluate(self, x):
@@ -121,7 +138,10 @@ class Gaussian_Function(Function):
             sum += ai**2 * (xi-ui)**2
         return np.exp(-sum)
     def plot(self):
-        super().plot("gaussian")
+        super().plot("Gaussian Function")
+    @classmethod
+    def name(cls):
+        return "Gaussian Function"
 
 class Oscillatory_Function(Function):
     def _evaluate(self, x):
@@ -138,7 +158,10 @@ class Oscillatory_Function(Function):
             sum += ai*xi
         return np.cos(sum)
     def plot(self):
-        super().plot("oscillatory")
+        super().plot("Oscillatory Function")
+    @classmethod
+    def name(cls):
+        return "Oscillatory Function"
 
 class Discontinuous_Function(Function):
     def _evaluate(self, x):
@@ -158,222 +181,25 @@ class Discontinuous_Function(Function):
             sum += ai*xi
         return np.exp(sum)
     def plot(self):
-        super().plot("discontinuous")
+        super().plot("Discontinuous Function")
+    @classmethod
+    def name(cls):
+        return "Discontinuous Function"
 class Hyper_Plane(Function):
     def _evaluate(self, x):
         return self.a[0]
-def yield_tensor(dim, points_per_dim, point=None):
-    if dim == 0:
-        yield np.array(point)
-    else:
-        if point is None:
-            point = []
-        for i in range(0, points_per_dim):
-            point.append(i/points_per_dim)
-            yield from yield_tensor(dim-1, points_per_dim, point=point)
-            point.pop()
-def generate_k(dim, l, k_left=None):
-    if k_left == None:
-        k_left = l+dim-1
-    for k_i in range(1,k_left+1):
-        next_k_left = k_left-k_i
-        next_dim = dim-1
-        if next_k_left >= next_dim:
-            if dim == 1:
-                yield [k_i]
-            else:
-                for k in generate_k(next_dim, l, next_k_left):
-                    yield [k_i]+k
-
-def generate_midpoint_j(k):
-    k_value = k[0]
-    if len(k)==1:
-        for i in range(1,k_value+1):
-            yield [i]
-    else:
-        for i in range(1,k_value+1):
-            for sub_j in generate_midpoint_j(k[1:]):
-                yield [i] + sub_j
-
-def generate_mid_point(j,k):
-    """
-    maps j,k to point on sparse matrix ([0,1]^d) with univariate cubature
-    levels defined by k 
-    """
-    p = []
-    for j_i, k_i in zip(j,k):
-        N = k_i
-        denominator = k_i+1
-        numerator = j_i
-        p.append(numerator/denominator)
-    return tuple(p)
-
-def generate_q(k, l, dim, q_left=None):
-    if q_left is None:
-        q_left = l + 2*dim - np.sum(k)-1
-    for q_i in range(1, q_left+1):
-        next_q_left = q_left-q_i
-        next_dim = dim-1
-        if next_q_left >= next_dim:
-            if dim == 1:
-                yield [q_i]
-            else:
-                for q in generate_q(k, l, next_dim, q_left=next_q_left):
-                    yield [q_i] + q
-# def get_midpoint_v(k_i, j_i, q_i):
-#     if q_i == 1:
-#         return get_univariate_midpoint_weight(k_i,j_i) #univarite rule for level k_i and index j_i
-#     else:
-#         return get_univariate_midpoint_weight(k_i,j_i)
-def get_midpoint_weight(j,k,dim, l):
-    w_k_j = 1
-    # for q in generate_q(k,l,dim):
-    #     product = 1
-    #     for k_i, j_i, q_i in zip(k,j,q):
-    #         product *= get_midpoint_v(k_i, j_i, q_i)
-    #     w_k_j += product
-    
-    k_norm = sum(k)
-    for k_i, j_i in zip(k,j):
-        w = 1/k_i
-        c = (-1)**(l-k_norm)
-        # print("choose")
-        # print(dim-1)
-        # print(l-k_norm)
-        # print(np.choose(dim-1, l-k_norm))
-        
-        combos = comb(dim-1, l-k_norm)
-        w_k_j *= w*c * combos
-    return w_k_j
-
-    # w_k_j = 
-    # for q in range(np.sum(k), 2*dim + l):
-    # check = 
-    # assert(weight == check)
-    # return weight
-
-def generate_midpoint_point_weight(dim, l):
-    """ midpoint cubature rule
-    Parameter:
-        k:
-            d-dimensional array where each entry represents the 
-            number of points perform a rectangle univariate
-            integral for
-    Yields:
-        2-tuples of point and weight for rectangle cubature for smolyak
-    """
-    for k in generate_k(dim, l):
-        # print(f"k:{k}")
-        for j in generate_midpoint_j(k):
-            # print(f"j:{j}")
-            point = generate_mid_point(j,k)
-            weight = get_midpoint_weight(j,k, dim, l)
-            yield point, weight
-
-    
-def generate_clenshaw_curtis_points(j,k):
-    """
-    Parameter:
-        j, k
-    Yields:
-        point
-    """
-    point = []
-    for j_i, k_i in zip(j,k):
-        n = k_i
-        coord = .5 if n==1 else np.cos(np.pi*(j_i-1)/(n-1))/2+.5
-        point.append(coord)
-    return tuple(point)
-
-def get_clenshaw_curtis_weight(j,k, dim, l):
-    return 1 # TODO
-
-def generate_clenshaw_curtis_point_weight(d, l):
-    for k in generate_k(d, l):
-        # print(f"k:{k}")
-        for j in generate_midpoint_j(k):
-            # print(f"j:{j}")
-            point = generate_clenshaw_curtis_points(j,k)
-            weight = get_midpoint_weight(j,k, d, l)
-            yield point, weight
-
-
-def smolyak_integrate(f, l=5):
-    """
-    f:
-        input function
-    l:
-        approximation level ~ correlates with number of points we select for sparse grid
-    returns:
-        smolyak estimated integral
-    """
-    evaluated = {}
-    d = f.dimension()
-    k = generate_k(d,l)
-    integrand = 0
-    for point, weight in generate_clenshaw_curtis_point_weight(d, l):
-        if point not in evaluated:
-            evaluated[point] = f.evaluate(point)
-        integrand += weight * evaluated[point] #create custom memoization evaluate
-    return integrand
 
 class q():
-    def __init__(self,l,f,cc=True):
+    def __init__(self,l,f):
         self.d = f.dimension()
         assert(0<=l)
         self.l = l + self.d #add l to d
         self.f = f 
-        self.cc=cc
 
-        self.cache_k = {}
-        self.cache_j = {}
-        self.cache_uni_pw = {}
-        self.cache_pw = {}
-        self.cache_eval = {}
-        
-    # def check_cache(self, function_id, input):
-    #     if function_id == "k":
-    #         pass
-    #     elif function_id == "j":
-    #         pass
-    #     elif function_id == "uni_pw":
-    #         pass
-    #     elif function_id == "pw":
-    #         pass
-    #     elif function_id == "eval":
-    #         pass
-    #     else:
-    #         raise ValueError("function_id is invalid")
-    # def add_to_cache(self, function_id, input, output):
-    #     if function_id == "k":
-    #         pass
-    #     elif function_id == "j":
-    #         pass
-    #     elif function_id == "uni_pw":
-    #         pass
-    #     elif function_id == "pw":
-    #         j, k = input
-    #         j = np.array(j)
-    #         k = np.array(k)
-    #         sortedpairs = sorted(enumerate(j), key=lambda x: x[-1])
-    #         indices = np.fromiter(index for (value, index) in sortedpairs)
-    #         self.cache_pw[indices] = 
-
-    #     elif function_id == "eval":
-    #         pass
-    #     else:
-    #         raise ValueError("function_id is invalid")
-        
     def get_k(self):
         def sum_k(length,d,k=[]):
             #k iterates thrgouh dimensional quadrature levels
             if len(k) == d:# and sum(k)>=max(d,self.l-d+1):
-                # the second boolean check doesn't affect accuracy might help speed
-                #from the thesis page 21 equation
-                #max(d,k-d+1)
-                #k is level
-                #d is dimension
-                # assert(sum(k)>=max(d,self.l-d+1)) #k is level, 
                 yield k.copy()
             else:
                 for i in range(1,length+1):
@@ -382,9 +208,7 @@ class q():
                     k.pop()
         yield from sum_k(self.l,self.d)
     def get_m(self,k_i):
-        if self.cc:
-            return 1 if k_i ==1 else 2**(k_i-1)+1
-        raise NotImplementedError("add smolyak midpoint cubature")
+        return 1 if k_i ==1 else 2**(k_i-1)+1
     def get_j(self, k):
         #j iterates through the number of points for quadrature levels defined by k
         d,l= self.d,self.l
@@ -398,8 +222,6 @@ class q():
                     j.pop()
         yield from sum_j(k)
     def _cc_univariate_point_weight(self, j_i, k_i):
-        # print(f"j_i:{j_i}")
-        # print(f"k_i:{k_i}")
         if k_i == 1: #edge case
             return 0, 2 
         else:
@@ -417,7 +239,6 @@ class q():
                 for i in range(1, (n-3)//2+1):
                     term += 1/(4*i**2-1)*np.cos(2 * np.pi * i * (j_i-1)/(n-1))
                 w = 2/(n-1) * (1-np.cos(np.pi * (j_i-1))/(n*(n-2)) - 2*term) # removed divided by 2
-            # print(f"final_check:{w}")
             return p,w
 
     def _cc_sparse_grid_point_weight(self, j, k):
@@ -437,8 +258,6 @@ class q():
         for k in self.get_k():
             for j in self.get_j(k):
                 point, weight = self._cc_sparse_grid_point_weight(j,k)
-                # print(f"point:{point}")
-                # print(f"weight:{weight}")
                 yield point, weight
     
     def integrate(self):
@@ -448,38 +267,21 @@ class q():
         weights = 0
         for point, weight in self.cc_sparse_grid_point_weights():
             weights += weight
-            # print()
-            # print(f"weight:{weight}")
-            # print(f"eval{f.evaluate(point)}")
             integrand += weight * f.evaluate(point) #create custom memoization evaluate
-        # print(f"weights:{weights}")
         return integrand
-
-
-def smolyak_sparsegrid(f, l):
-    dim = f.dimension()                   # Dimensionality of function to interpolate
-    level_max = l             # Maximum degree of interpolation
-    shape = Nx, Ny = 5, 5   # values on x and y
-
-    Ntot = Nx * Ny
-    x = np.linspace(0, 1, Nx)
-    y = np.linspace(0, 1, Ny)
-    X,  Y = np.meshgrid(x, y)
-    gridout = np.asarray([X.reshape(Ntot), Y.reshape(Ntot)]).T
-
-    integration_interval = np.asarray([[0.0, 1.0], [0.0, 1.0]]).T
-    interpolation_type = 'CC'
-    interp = SparseInterpolator(level_max, dim,
-                                interpolation_type,
-                                intergration_interval)
-    # fitting returns also the interpolated values
-    output = interp.fit(f.evaluate, gridout)
-    # one can evaluate the interpolation at any other point futher on
-    output = interp.evaluate(gridout)
-    
             
 
 def tensor_integrate(f):
+    def yield_tensor(dim, points_per_dim, point=None):
+        if dim == 0:
+            yield np.array(point)
+        else:
+            if point is None:
+                point = []
+            for i in range(0, points_per_dim):
+                point.append(i/points_per_dim)
+                yield from yield_tensor(dim-1, points_per_dim, point=point)
+                point.pop()
     d = f.dimension()
     points_per_dim = 5
     integral = 0
@@ -497,21 +299,25 @@ def tensor_integrate(f):
     
 
 
-def adaptive_cubature(f,n_max=None,abs_err=None, transform_boundary=False):
+def adaptive_cubature(f,n_max=None,abs_err=None, transform_boundary=False, discontinuous=None):
     d = f.dimension()
     function = lambda x: f.evaluate(x)
     xmin = None
     xmax = None
+    assert(not ((not (discontinuous is None)) and transform_boundary))
     if transform_boundary:
         xmin = [-1]*d
         xmax = [1]*d
+    elif not(discontinuous is None):
+        xmin = [0]*d
+        xmax=discontinuous
     else:
         xmin = [0]*d
         xmax = [1]*d
     val = None
     err = None
     if n_max:
-        val, err = cubature.cubature(function, d, 1, xmin, xmax, n_max) # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
+        val, err = cubature.cubature(function, d, 1, xmin, xmax, maxEval=n_max) # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
     elif abs_err:
         val, err = cubature.cubature(function, d, 1, xmin, xmax, abserr=abs_err)
     else:
@@ -519,7 +325,7 @@ def adaptive_cubature(f,n_max=None,abs_err=None, transform_boundary=False):
 
     return val[0]
 
-def mc_integrate(f, n_max=None, abs_err=None):
+def mc_integrate(f, n_max=None, abs_err=None, rel_err = None):
     abs_tol = 1e-7
     d = f.dimension()
     solution = None
@@ -530,9 +336,13 @@ def mc_integrate(f, n_max=None, abs_err=None):
     solution, data = CubQMCLatticeG(integral).integrate() #stopping criterion, useful param: n_init=1024.0, n_max=1024
     #data has the error and number of steps (I think it is n_init or n_max, check this) 
     if n_max:
-        solution, data = CubQMCLatticeG(integral, n_max=n_max).integrate() # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
+        solution, data = CubQMCLatticeG(integral, n_init = n_max, n_max=n_max).integrate() # useful params: abserr=1e-08, relerr=1e-08, maxEval=0
     elif abs_err:
         solution, data = CubQMCLatticeG(integral,abs_tol=abs_err).integrate()
+    elif rel_err:
+        solution, data = CubQMCLatticeG(integral,rel_tol=rel_err).integrate()
     else:
         solution, data = CubQMCLatticeG(integral).integrate()
+    # print(data)
+    # print(f"final solution:{solution}")
     return solution
