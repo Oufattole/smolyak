@@ -104,8 +104,11 @@ def test_cubatures(func, d, levels, runs):
         ground_truth = None
         if func == smolyak.Discontinuous_Function:
             ground_truth = smolyak.adaptive_cubature(f, abs_err=error, discontinuous=u)
-        else:
+        elif func == smolyak.Continuous_Function:
             ground_truth = smolyak.mc_integrate(f, rel_err=error)
+        else:
+            ground_truth = smolyak.mc_integrate(f, rel_err=1e-6)
+            
         # print(f"gt:{ground_truth}")
         for i in range(len(levels)):
             level = levels[i]
@@ -148,9 +151,11 @@ def plot(d, func_name, cuba, mc, smolyak, levels):
     def get_rel_error_points(rel_error_dict):
         rel_errors = []
         points = []
+        all_errors = list(cuba.values())+list(mc.values()) + list(smolyak.values())
         for key in sorted(rel_error_dict.keys()):
-            rel_errors.append(rel_error_dict[key])
-            points.append(key)
+            if rel_error_dict[key] < 1.2 and rel_error_dict[key] < 2*sum(all_errors)/len(all_errors):
+                rel_errors.append(rel_error_dict[key])
+                points.append(key)
         return rel_errors, points
 
     cuba_rel_error, cuba_points = get_rel_error_points(cuba)
@@ -162,7 +167,7 @@ def plot(d, func_name, cuba, mc, smolyak, levels):
     x_1 = np.log(cuba_points)
     x_2 = np.log(mc_points)
     x_3 = np.log(smolyak_points)
-    x_3 = [each for each in x_3 if each >= min(min(x_1), min(x_2))]
+    x_3 = [each for each in x_3 if each >= min(min(x_1)-2, min(x_2)-2)]
 
     y_1 = cuba_rel_error
     y_2 = mc_rel_error
@@ -203,7 +208,7 @@ def plot_comparisons():
     for func in functions:
         func_name = func.name()
         for d in dimensions:
-            if d>=10 and func is smolyak.Discontinuous_Function:
+            if d >10 and func is smolyak.Discontinuous_Function:
                 continue
             print(f"----------------------Commence dimension {d}-----------------------------")
             ls = levels
