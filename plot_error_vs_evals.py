@@ -13,7 +13,12 @@ functions = [
     smolyak.Oscillatory_Function,
     smolyak.Discontinuous_Function
 ]
-ids = ["cont","gaus","disc","oscil"]
+ids = [
+    "cont",
+    "gaus",
+    "oscil",
+    "disc",
+    ]
 fname_to_id = {function.name(): id for function, id in zip(functions, ids)}
 def read_smolyak(d):
     smolyak_integral_steps = {}
@@ -24,13 +29,18 @@ def read_smolyak(d):
         # smolyak_data[(dim,level,function_name)].append([r, steps, integral, a, u])
     for a, b  in df.iterrows():
         # print("------------------")
-        # print(b.tolist()[:7])
+        
         dim, level, function_name, r, steps, integral = b.tolist()[:6]
         au = b.tolist()[6:]
         a = au[:-len(au)//2]
         u = au[-len(au)//2:]
         assert(len(a) +len(u) + 6 == len(b.tolist()))
         assert(dim==d)
+        # if function_name == "oscil":
+        #     print(b.tolist())
+        #     print(a)
+        #     print(u)
+        #     raise()
 
         smolyak_integral_steps.setdefault((r,function_name), [])
         smolyak_integral_steps[(r, function_name)].append((level, integral, steps))
@@ -76,6 +86,7 @@ def test_cubatures(func, d, levels, runs):
     c_freq = {}
     mc_rel_error = {}
     mc_freq ={}
+    s_freq = {}
 
     cuba_points, mc_points, smolyak_points = [], [], []
 
@@ -87,12 +98,15 @@ def test_cubatures(func, d, levels, runs):
         # u = np.array
         # a = np.random.rand(d)*2+1
         f = func(a,u)
+        # print(f"a:{a}")
+        # print(f"u:{u}")
         error = 1e-4
         ground_truth = None
         if func == smolyak.Discontinuous_Function:
             ground_truth = smolyak.adaptive_cubature(f, abs_err=error, discontinuous=u)
         else:
             ground_truth = smolyak.mc_integrate(f, rel_err=error)
+        # print(f"gt:{ground_truth}")
         for i in range(len(levels)):
             level = levels[i]
             cuba_error, mc_error, cuba_points, mc_points = test_cubature(f,d,level,ground_truth)
@@ -109,17 +123,21 @@ def test_cubatures(func, d, levels, runs):
 
         for i in range(len(smolyak_results)):
             level, integral, steps = smolyak_results[i]
+            # print(integral)
+            # raise()
             smolyak_rel_error.setdefault(steps,0)
             smolyak_rel_error[steps] += abs((integral - ground_truth)/ground_truth) #[i] += abs((integral - ground_truth)/ground_truth)
+            s_freq.setdefault(steps,0)
+            s_freq[steps] += 1
             # smolyak_points[i] = steps
     for key in cuba_rel_error.keys():
         cuba_rel_error[key] /= c_freq[key]
-
+    
     for key in mc_rel_error.keys():
         mc_rel_error[key] /= mc_freq[key]
 
     for key in smolyak_rel_error.keys():
-        smolyak_rel_error[key] /= runs
+        smolyak_rel_error[key] /= s_freq[key]
 
     return cuba_rel_error, mc_rel_error, smolyak_rel_error
 
@@ -194,6 +212,6 @@ def plot_comparisons():
             cuba_rel_error, mc_rel_error, smolyak_rel_error = test_cubatures(func, d, ls, runs)
             
             plot(d, func_name, cuba_rel_error, mc_rel_error, smolyak_rel_error, ls)
-x, y = read_smolyak(3)
-print(x.keys())
+# x, y = read_smolyak(3)
+# print(x.keys())
 plot_comparisons()  

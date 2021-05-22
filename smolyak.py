@@ -150,13 +150,14 @@ class Oscillatory_Function(Function):
         u = self.u
         d = len(self.a)
         assert(len(x)==d)
-        sum = 2 * np.pi * u[0]
+        sum = 0
+        term = 2 * np.pi * u[0]
         for i in range(d):
             xi = x[i]
             ai = a[i]
             ui = u[i]
             sum += ai*xi
-        return np.cos(sum)
+        return np.cos(term + sum)
     def plot(self):
         super().plot("Oscillatory Function")
     @classmethod
@@ -172,7 +173,7 @@ class Discontinuous_Function(Function):
         d = len(self.a)
         assert(len(x)==d)
         sum = 0
-        if np.any(x>u):
+        if x[0]>u[0] or x[1]>u[1]:
             return 0
         for i in range(d):
             xi = x[i]
@@ -310,7 +311,8 @@ def adaptive_cubature(f,n_max=None,abs_err=None, transform_boundary=False, disco
         xmax = [1]*d
     elif not(discontinuous is None):
         xmin = [0]*d
-        xmax=discontinuous
+        xmax = list(discontinuous[0:2]) + [1]*(d-2)
+        assert(len(xmin)==len(xmax))
     else:
         xmin = [0]*d
         xmax = [1]*d
